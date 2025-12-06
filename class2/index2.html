@@ -1,0 +1,330 @@
+<!doctype html>
+<html>
+
+<head>
+  <meta charset="utf-8" />
+  <title>Draw Worm (fixed)</title>
+  <style>
+   body {
+  margin: 0px;
+  height: 100%;
+  overflow: hidden;
+  background: -moz-radial-gradient(
+    center,
+    ellipse cover,
+    rgba(255, 197, 120, 1) 0%,
+    rgba(251, 157, 35, 1) 100%
+  );
+  background: -webkit-gradient(
+    radial,
+    center center,
+    0px,
+    center center,
+    100%,
+    color-stop(0%, rgba(255, 197, 120, 1)),
+    color-stop(100%, rgba(251, 157, 35, 1))
+  );
+  background: -webkit-radial-gradient(
+    center,
+    ellipse cover,
+    rgba(255, 197, 120, 1) 0%,
+    rgba(251, 157, 35, 1) 100%
+  );
+  background: -o-radial-gradient(
+    center,
+    ellipse cover,
+    rgba(255, 197, 120, 1) 0%,
+    rgba(251, 157, 35, 1) 100%
+  );
+  background: -ms-radial-gradient(
+    center,
+    ellipse cover,
+    rgba(255, 197, 120, 1) 0%,
+    rgba(251, 157, 35, 1) 100%
+  );
+  background: radial-gradient(
+    ellipse at center,
+    rgba(255, 197, 120, 1) 0%,
+    rgba(251, 157, 35, 1) 100%
+  );
+}
+
+canvas {
+  height: 100%;
+}
+
+  </style>
+</head>
+
+<body>
+  <canvas id="canvas"></canvas>
+
+  <script>
+    // --- Matrix2D stub (you must provide your full Matrix2D implementation if different) ---
+    // Minimal Matrix2D that matches used methods/props in your original code.
+    function Matrix2D() {
+      this.a = 1; this.b = 0; this.c = 0; this.d = 1; this.tx = 0; this.ty = 0;
+    }
+    Matrix2D.prototype.rotate = function (theta) {
+      var c = Math.cos(theta), s = Math.sin(theta);
+      // post-multiply rotation
+      var a = this.a * c + this.c * s;
+      var b = this.b * c + this.d * s;
+      var c2 = this.c * c - this.a * s;
+      var d2 = this.d * c - this.b * s;
+      this.a = a; this.b = b; this.c = c2; this.d = d2;
+    };
+    Matrix2D.prototype.translate = function (tx, ty) {
+      this.tx += tx;
+      this.ty += ty;
+    };
+    Matrix2D.prototype.scale = function (sx, sy) {
+      this.a *= sx; this.b *= sx;
+      this.c *= sy; this.d *= sy;
+    };
+    // prependMatrix used in original — implement simple prepend (this = other * this)
+    Matrix2D.prototype.prependMatrix = function (m) {
+      var a = m.a * this.a + m.c * this.b;
+      var b = m.b * this.a + m.d * this.b;
+      var c = m.a * this.c + m.c * this.d;
+      var d = m.b * this.c + m.d * this.d;
+      var tx = m.a * this.tx + m.c * this.ty + m.tx;
+      var ty = m.b * this.tx + m.d * this.ty + m.ty;
+      this.a = a; this.b = b; this.c = c; this.d = d; this.tx = tx; this.ty = ty;
+    };
+
+    // --- DrawWorm (improved) ---
+    function DrawWorm() {
+      var canvas, context;
+      var width, height;
+      var dpi;
+      var mouse = { x: 0, y: 0, initialized: false };
+      this.mouse = mouse;
+
+      var vms = [];
+      var MAX_NUM = 100;
+      var N = 80;
+
+      var px = 0, py = 0; // will be initialized on first pointer move
+
+      var drawIntervalId = null;
+
+      this.initialize = function () {
+        canvas = document.getElementById("canvas");
+        context = canvas.getContext("2d");
+
+        // Setup size for first time
+        resizeCanvas();
+
+        // Use pointer events (works for mouse, pen, touch)
+        canvas.addEventListener("pointermove", PointerMove, false);
+        canvas.addEventListener("pointerenter", PointerEnter, false);
+        canvas.addEventListener("pointerleave", PointerLeave, false);
+        canvas.addEventListener("click", MouseDown, false);
+
+        window.addEventListener("resize", function () {
+          // re-create canvas size & scaling on resize
+          resizeCanvas();
+        }, false);
+
+        // main draw loop
+        if (drawIntervalId) clearInterval(drawIntervalId);
+        drawIntervalId = setInterval(Draw, 20);
+      };
+
+      function resizeCanvas() {
+        dpi = window.devicePixelRatio || 1;
+        // CSS size
+        var cssW = window.innerWidth;
+        var cssH = window.innerHeight;
+        // actual drawing buffer size (physical pixels)
+        canvas.width = Math.round(cssW * dpi);
+        canvas.height = Math.round(cssH * dpi);
+        canvas.style.width = cssW + "px";
+        canvas.style.height = cssH + "px";
+
+        // reset transform and scale to device pixels
+        context.setTransform(1, 0, 0, 1, 0, 0); // reset
+        context.scale(dpi, dpi);
+
+        // keep px,py inside new viewport (optional)
+        if (!mouse.initialized) {
+          px = cssW / 2;
+          py = cssH / 2;
+        } else {
+          // clamp
+          px = Math.max(0, Math.min(cssW, px));
+          py = Math.max(0, Math.min(cssH, py));
+        }
+      }
+
+      var Draw = function () {
+        var len = vms.length;
+        var i;
+
+        for (i = 0; i < len; i++) {
+          var o = vms[i];
+
+          if (o.count < N) {
+            DrawWormSegment(o);
+            o.count++;
+          } else {
+            len--;
+            vms.splice(i, 1);
+            i--;
+          }
+        }
+
+        Check();
+      };
+
+      var DrawWormSegment = function (obj) {
+        if (Math.random() > 0.9) {
+          obj.tmt.rotate(-obj.r * 2);
+          obj.r *= -1;
+        }
+
+        obj.vmt.prependMatrix(obj.tmt);
+
+        var cc1x = -obj.w * obj.vmt.c + obj.vmt.tx;
+        var cc1y = -obj.w * obj.vmt.d + obj.vmt.ty;
+
+        var pp1x = (obj.c1x + cc1x) / 2;
+        var pp1y = (obj.c1y + cc1y) / 2;
+
+        var cc2x = obj.w * obj.vmt.c + obj.vmt.tx;
+        var cc2y = obj.w * obj.vmt.d + obj.vmt.ty;
+
+        var pp2x = (obj.c2x + cc2x) / 2;
+        var pp2y = (obj.c2y + cc2y) / 2;
+
+        context.fillStyle = "#000000";
+        context.beginPath();
+        context.moveTo(obj.p1x, obj.p1y);
+        context.quadraticCurveTo(obj.c1x, obj.c1y, pp1x, pp1y);
+        context.lineTo(pp2x, pp2y);
+        context.quadraticCurveTo(obj.c2x, obj.c2y, obj.p2x, obj.p2y);
+        context.closePath();
+        context.fill();
+
+        obj.c1x = cc1x; obj.c1y = cc1y;
+        obj.p1x = pp1x; obj.p1y = pp1y;
+        obj.c2x = cc2x; obj.c2y = cc2y;
+        obj.p2x = pp2x; obj.p2y = pp2y;
+      };
+
+      var Check = function () {
+        var x0 = mouse.x;
+        var y0 = mouse.y;
+
+        var vx = x0 - px;
+        var vy = y0 - py;
+
+        var len = Math.min(Magnitude(vx, vy), 50) + 8;
+
+        if (len < 10) return;
+
+        var matrix = new Matrix2D();
+
+        matrix.rotate(-Math.atan2(vx, vy));
+        matrix.translate(x0, y0);
+
+        createWorm(matrix, len);
+
+        context.beginPath();
+        context.strokeStyle = "#000000";
+        context.moveTo(px, py);
+        context.lineTo(x0, y0);
+        context.stroke();
+        context.closePath();
+
+        px = x0;
+        py = y0;
+      };
+
+      var createWorm = function (mtx, len) {
+        var angle = Math.random() * (Math.PI / 6 - Math.PI / 64) + Math.PI / 64;
+        if (Math.random() > 0.5) angle *= -1;
+
+        var tmt = new Matrix2D();
+        tmt.scale(0.95, 0.95);
+        tmt.translate(12, 0);
+
+        var w = 0.5;
+
+        var obj = new Worm();
+
+        obj.c1x = -w * mtx.c + mtx.tx;
+        obj.p1x = -w * mtx.c + mtx.tx;
+        obj.c1y = -w * mtx.d + mtx.ty;
+        obj.p1y = -w * mtx.d + mtx.ty;
+
+        obj.c2x = w * mtx.c + mtx.tx;
+        obj.p2x = w * mtx.c + mtx.tx;
+        obj.c2y = w * mtx.d + mtx.ty;
+        obj.p2y = w * mtx.d + mtx.ty;
+
+        obj.vmt = mtx;
+        obj.tmt = tmt;
+
+        obj.r = angle;
+        obj.w = len / 20;
+        obj.count = 0;
+
+        vms.push(obj);
+        if (vms.length > MAX_NUM) vms.shift();
+      };
+
+      function Worm() {
+        this.c1x = null; this.c1y = null;
+        this.c2x = null; this.c2y = null;
+        this.p1x = null; this.p1y = null;
+        this.p2x = null; this.p2y = null;
+        this.w = null; this.r = null;
+        this.count = null; this.vmt = null; this.tmt = null;
+      }
+
+      var MouseDown = function (e) {
+        e.preventDefault();
+        // Clear and re-scale (clear resets transform)
+        context.setTransform(1, 0, 0, 1, 0, 0);
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        context.scale(dpi, dpi);
+        vms = [];
+      };
+
+      // Pointer handlers (works for mouse & touch)
+      function PointerMove(e) {
+        var rect = canvas.getBoundingClientRect();
+        // mouse coords in CSS pixels (same coordinate space as scaled drawing)
+        mouse.x = e.clientX - rect.left;
+        mouse.y = e.clientY - rect.top;
+        mouse.initialized = true;
+        // initialize px/py on first pointer so movement isn't ignored
+        if (!px && !py) { px = mouse.x; py = mouse.y; }
+      }
+
+      function PointerEnter(e) {
+        // optional: treat enter like a move to initialize
+        PointerMove(e);
+      }
+
+      function PointerLeave(e) {
+        // optional: if you want the worm to stop when leaving canvas:
+        // mouse.initialized = false;
+        // or keep last position — nothing needed
+      }
+
+      function Magnitude(x, y) { return Math.sqrt(x * x + y * y); }
+    }
+
+    // --- demo runner ---
+    var app;
+    setTimeout(function () {
+      app = new DrawWorm();
+      app.initialize();
+    }, 10);
+  </script>
+</body>
+
+</html>
