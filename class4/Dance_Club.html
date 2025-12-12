@@ -29,6 +29,7 @@
 <body>
     <canvas id="canvas"></canvas>
     <script>
+        // Gets a reference to the canvas and its 2D drawing context.
         var c = document.getElementById("canvas");
         var ctx = c.getContext("2d");
 
@@ -38,7 +39,9 @@
             c.height = box.height;
         }
 
-        var light = {
+ 
+
+        let light = {
             x: 160,
             y: 200
         }
